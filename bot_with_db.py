@@ -69,19 +69,19 @@ async def process_tweet_with_db(message, tweet_id):
     if db.is_tweet_downloaded(tweet_id):
         print(f"⚠️ Tweet {tweet_id} already downloaded, skipping...")
         # Optional: Still post the link but don't re-download
-        vx_url = f"https://vxtwitter.com/i/status/{tweet_id}"
+        fx_url = f"https://fxtwitter.com/i/status/{tweet_id}"
         await message.channel.send(
-            f"📋 Already downloaded: {vx_url}\n"
+            f"📋 Already downloaded: {fx_url}\n"
             f"(Originally downloaded from this tweet)"
         )
         return
     
     try:
-        vx_url = f"https://vxtwitter.com/i/status/{tweet_id}"
+        fx_url = f"https://fxtwitter.com/i/status/{tweet_id}"
         
-        # Send vxtwitter link
+        # Send fxtwitter link
         await message.channel.send(
-            f"📥 Media from {message.author.mention}: {vx_url}\n"
+            f"📥 Media from {message.author.mention}: {fx_url}\n"
             f"🔄 Downloading to server..."
         )
         
@@ -134,54 +134,28 @@ async def download_media_with_tracking(tweet_id, discord_user, discord_channel):
     """Download media with enhanced tracking"""
     downloaded_files = []
     
+    # Try fxtwitter API
+    api_url = f"https://api.fxtwitter.com/status/{tweet_id}"
+    # Example of parsing the FxTwitter API response
     try:
-        # Try vxtwitter API first
-        api_url = f"https://api.vxtwitter.com/Twitter/status/{tweet_id}"
         response = requests.get(api_url, timeout=10)
-        
         if response.status_code == 200:
             data = response.json()
+            # FxTwitter nests tweet data inside a 'tweet' key
+            tweet_data = data.get('tweet', {})
             
-            if 'media_extended' in data and data['media_extended']:
-                download_path = get_download_subpath(tweet_id)
-                
-                for i, media in enumerate(data['media_extended']):
-                    media_url = media.get('url')
+            # Check for media in the 'media' key
+            if 'media' in tweet_data and tweet_data['media']:
+                for i, media_item in enumerate(tweet_data['media']):
+                    # The direct URL might be in 'url' or 'media_url_https'
+                    media_url = media_item.get('url') or media_item.get('media_url_https')
                     if media_url:
-                        # Generate safe filename
-                        file_extension = os.path.splitext(media_url.split('?')[0])[1]
-                        if not file_extension:
-                            file_extension = '.jpg'  # Default
-                        
-                        # Create unique filename
-                        timestamp = datetime.now().strftime("%H%M%S")
-                        filename = f"{tweet_id}_{i}_{timestamp}{file_extension}"
-                        filepath = os.path.join(download_path, filename)
-                        
-                        # Download file
-                        media_response = requests.get(media_url, stream=True)
-                        file_size = 0
-                        
-                        with open(filepath, 'wb') as f:
-                            for chunk in media_response.iter_content(chunk_size=8192):
-                                f.write(chunk)
-                                file_size += len(chunk)
-                        
-                        # Verify file was written
-                        if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
-                            downloaded_files.append({
-                                'name': filename,
-                                'path': filepath,
-                                'size': file_size,
-                                'type': file_extension[1:],  # Remove dot
-                                'url': media_url
-                            })
-                            print(f"✅ Downloaded: {filename} ({file_size} bytes)")
-        else:
-            print(f"⚠️ API returned status {response.status_code} for tweet {tweet_id}")
-            
+                        # ... proceed with your download logic ...
+                        print(f"Found media: {media_url}")
+            else:
+                print(f"⚠️ No media found for tweet {tweet_id}")
     except requests.exceptions.RequestException as e:
-        print(f"❌ Download error for tweet {tweet_id}: {e}")
+        print(f"❌ FxTwitter API error for tweet {tweet_id}: {e}")
     
     return downloaded_files
 
