@@ -82,8 +82,8 @@ async def process_tweet_with_db(message, tweet_id):
         
         # Send fxtwitter link
         await message.channel.send(
-            f"📥 Media from {message.author}: {fx_url}\n"
-            f"🔄 Downloading to server..."
+            f"📥 Media from {message.author}: {fx_url}"
+            # f"🔄 Downloading to server..."
         )
         
         # Download media
@@ -116,20 +116,13 @@ async def process_tweet_with_db(message, tweet_id):
                     download_url=file_info.get('url')
                 )
             
-            await message.channel.send(
-                f"✅ Successfully downloaded {len(downloaded_files)} file(s) "
-                f"({total_size / 1024 / 1024:.2f} MB)"
+            print(f"✅ Successfully downloaded {len(downloaded_files)} file(s) ({total_size / 1024 / 1024:.2f} MB)"
             )
         else:
-            await message.channel.send(
-                f"⚠️ No media found in tweet {tweet_id}"
-            )
+            print(f"⚠️ No media found in tweet {tweet_id}")
             
     except Exception as e:
         print(f"❌ Error processing tweet {tweet_id}: {e}")
-        await message.channel.send(
-            f"❌ Failed to process media from tweet {tweet_id}"
-        )
 
 async def download_media_with_tracking(tweet_id, discord_user, discord_channel):
     """Download media with enhanced tracking"""
