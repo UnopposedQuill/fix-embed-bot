@@ -1,6 +1,9 @@
 -- Check total statistics
 SELECT * FROM stats;
 
+-- Check users
+SELECT * FROM users;
+
 -- View all downloads with file counts
 SELECT d.*, 
        COUNT(mf.id) as file_count,
