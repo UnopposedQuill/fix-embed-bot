@@ -150,7 +150,7 @@ async def download_media_with_tracking(tweet_id, discord_user, discord_channel):
 
         # Create download directory
         today = datetime.now().strftime("%Y-%m-%d")
-        download_dir = os.path.join("downloaded_media", today, tweet_id[:8])
+        download_dir = os.path.join("downloaded_media", today)
         os.makedirs(download_dir, exist_ok=True)
 
         # Download each media item
