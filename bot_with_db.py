@@ -76,25 +76,40 @@ async def process_tweet_with_db(message, tweet_id):
             f"(Originally downloaded from this tweet)"
         )
         return
-    
+
     try:
         fx_url = f"https://fxtwitter.com/i/status/{tweet_id}"
-        
-        # Send fxtwitter link
-        await message.channel.send(
-            f"📥 Media from {message.author}: {fx_url}"
-            # f"🔄 Downloading to server..."
-        )
-        
+
+        # Send fxtwitter link first
+        await message.channel.send(f"📥 Media from {message.author}: {fx_url}")
+
+        # Attempt to remove original message, leave only the bot's
+        if message.guild and message.channel.permissions_for(message.guild.me).manage_messages:
+            try:
+                await message.delete()
+                print(f"🗑️ Successfully deleted original message {message.id}.")
+            except discord.NotFound:
+                print(f"ℹ️ Original message {message.id} was already deleted.")
+            except discord.Forbidden:
+                # This should not happen if the check passed, but it's a safe fallback
+                print(f"⚠️ Unexpectedly lacked permission to delete message {message.id}.")
+            except Exception as e:
+                print(f"⚠️ Other error deleting message: {e}")
+        else:
+            # The bot does not have the 'Manage Messages' permission here
+            print(f"❌ Cannot delete in #{message.channel}. Bot lacks 'Manage Messages' permission.")
+            # TODO: Send a temporary error (e.g., to a log channel you plan to create)
+            # await message.channel.send("⚠️ Need 'Manage Messages' to clean up.", delete_after=5)
+
         # Download media
         downloaded_files = await download_media_with_tracking(
             tweet_id, message.author, message.channel
         )
-        
+
+        # Finally, record in database
         if downloaded_files:
-            # Record in database
             total_size = sum(os.path.getsize(f['path']) for f in downloaded_files)
-            
+
             db.record_download(
                 tweet_id=tweet_id,
                 tweet_url=f"https://twitter.com/i/status/{tweet_id}",
@@ -104,7 +119,7 @@ async def process_tweet_with_db(message, tweet_id):
                 media_count=len(downloaded_files),
                 download_path=downloaded_files[0]['path'] if downloaded_files else None
             )
-            
+
             # Record individual files
             for file_info in downloaded_files:
                 db.add_media_file(
@@ -115,9 +130,8 @@ async def process_tweet_with_db(message, tweet_id):
                     file_type=file_info['type'],
                     download_url=file_info.get('url')
                 )
-            
-            print(f"✅ Successfully downloaded {len(downloaded_files)} file(s) ({total_size / 1024 / 1024:.2f} MB)"
-            )
+
+            print(f"✅ Successfully downloaded {len(downloaded_files)} file(s) ({total_size / 1024 / 1024:.2f} MB)")
         else:
             print(f"⚠️ No media found in tweet {tweet_id}")
             
