@@ -3,21 +3,20 @@ import discord
 import re
 import os
 import requests
-from datetime import datetime
-import mimetypes
 from discord.ext import commands
 from datetime import datetime
 from database import MediaDatabase
 from config import DISCORD_TOKEN, DOWNLOAD_PATH, ALLOWED_EXTENSIONS
+from functools import reduce
 
 # Initialize database
 db = MediaDatabase()
 
 # Create download directory with organization
-def get_download_subpath(tweet_id):
-    """Organize files by date and tweet ID"""
+def download_subpath():
+    """Organize files by date"""
     today = datetime.now().strftime("%Y-%m-%d")
-    daily_path = os.path.join(DOWNLOAD_PATH, today, tweet_id[:3])
+    daily_path = os.path.join(DOWNLOAD_PATH, today)
     os.makedirs(daily_path, exist_ok=True)
     return daily_path
 
@@ -139,6 +138,12 @@ async def process_tweet_with_db(message, tweet_id):
         print(f"❌ Error processing tweet {tweet_id}: {e}")
 
 async def download_media_with_tracking(tweet_id, discord_user, discord_channel):
+    def dig(obj, *keys, default=None):
+        try:
+            return reduce(lambda d, k: d[k], keys, obj)
+        except (KeyError, TypeError):
+            return default
+
     """Download media with enhanced tracking"""
     downloaded_files = []
 
@@ -155,17 +160,15 @@ async def download_media_with_tracking(tweet_id, discord_user, discord_channel):
 
         data = response.json()
 
-        # Extract tweet data, TODO: Fix possible exception if format is different
-        media_data = data['tweet']['media']['all']
+        # Extract tweet data. If these fields are not present, there is no media.
+        media_data = dig(data, 'tweet', 'media', 'all')
         if not media_data:
             print("ℹ️ No media found in tweet")
             return downloaded_files
         print(f"📥 Found {len(media_data)} media item(s)")
 
-        # Create download directory
-        today = datetime.now().strftime("%Y-%m-%d")
-        download_dir = os.path.join("downloaded_media", today)
-        os.makedirs(download_dir, exist_ok=True)
+        # Get the download directory
+        download_dir = download_subpath
 
         # Download each media item
         for i, media_item in enumerate(media_data):
