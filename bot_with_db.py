@@ -168,7 +168,7 @@ async def download_media_with_tracking(tweet_id, discord_user, discord_channel):
         print(f"📥 Found {len(media_data)} media item(s)")
 
         # Get the download directory
-        download_dir = download_subpath
+        download_dir = download_subpath()
 
         # Download each media item
         for i, media_item in enumerate(media_data):
