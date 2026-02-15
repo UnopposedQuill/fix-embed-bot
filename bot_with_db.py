@@ -65,11 +65,16 @@ async def on_message(message):
 
 async def process_tweet_with_db(message, tweet_id):
     """Process tweet with database tracking"""
+    fx_url = f"https://fxtwitter.com/i/status/{tweet_id}"
+
+    # Attempt to remove original message, leave only the bot's
+    await delete_message(message)
+
     # Check for duplicates
     if db.is_tweet_downloaded(tweet_id):
         print(f"⚠️ Tweet {tweet_id} already downloaded, skipping...")
         # Optional: Still post the link but don't re-download
-        fx_url = f"https://fxtwitter.com/i/status/{tweet_id}"
+
         await message.channel.send(
             f"📋 Already downloaded: {fx_url}\n"
             f"(Originally downloaded from this tweet)"
@@ -77,28 +82,8 @@ async def process_tweet_with_db(message, tweet_id):
         return
 
     try:
-        fx_url = f"https://fxtwitter.com/i/status/{tweet_id}"
-
         # Send fxtwitter link first
         await message.channel.send(f"📥 Media from {message.author}: {fx_url}")
-
-        # Attempt to remove original message, leave only the bot's
-        if message.guild and message.channel.permissions_for(message.guild.me).manage_messages:
-            try:
-                await message.delete()
-                print(f"🗑️ Successfully deleted original message {message.id}.")
-            except discord.NotFound:
-                print(f"ℹ️ Original message {message.id} was already deleted.")
-            except discord.Forbidden:
-                # This should not happen if the check passed, but it's a safe fallback
-                print(f"⚠️ Unexpectedly lacked permission to delete message {message.id}.")
-            except Exception as e:
-                print(f"⚠️ Other error deleting message: {e}")
-        else:
-            # The bot does not have the 'Manage Messages' permission here
-            print(f"❌ Cannot delete in #{message.channel}. Bot lacks 'Manage Messages' permission.")
-            # TODO: Send a temporary error (e.g., to a log channel you plan to create)
-            # await message.channel.send("⚠️ Need 'Manage Messages' to clean up.", delete_after=5)
 
         # Download media
         downloaded_files = await download_media_with_tracking(
@@ -131,11 +116,29 @@ async def process_tweet_with_db(message, tweet_id):
                 )
 
             print(f"✅ Successfully downloaded {len(downloaded_files)} file(s) ({total_size / 1024 / 1024:.2f} MB)")
-        else:
-            print(f"⚠️ No media found in tweet {tweet_id}")
-            
     except Exception as e:
         print(f"❌ Error processing tweet {tweet_id}: {e}")
+
+
+async def delete_message(message):
+    # Attempt to remove original message, leave only the bot's
+    if message.guild and message.channel.permissions_for(message.guild.me).manage_messages:
+        try:
+            await message.delete()
+            print(f"🗑️ Successfully deleted original message {message.id}.")
+        except discord.NotFound:
+            print(f"ℹ️ Original message {message.id} was already deleted.")
+        except discord.Forbidden:
+            # This should not happen if the check passed, but it's a safe fallback
+            print(f"⚠️ Unexpectedly lacked permission to delete message {message.id}.")
+        except Exception as e:
+            print(f"⚠️ Other error deleting message: {e}")
+    else:
+        # The bot does not have the 'Manage Messages' permission here
+        print(f"❌ Cannot delete in #{message.channel}. Bot lacks 'Manage Messages' permission.")
+        # TODO: Send a temporary error (e.g., to a log channel you plan to create)
+        # await message.channel.send("⚠️ Need 'Manage Messages' to clean up.", delete_after=5)
+
 
 async def download_media_with_tracking(tweet_id, discord_user, discord_channel):
     def dig(obj, *keys, default=None):
