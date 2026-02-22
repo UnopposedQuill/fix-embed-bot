@@ -101,7 +101,8 @@ async def process_tweet_with_db(message, tweet_id):
                 discord_channel=message.channel,
                 file_size=total_size,
                 media_count=len(downloaded_files),
-                download_path=downloaded_files[0]['path'] if downloaded_files else None
+                download_path=downloaded_files[0]['path'] if downloaded_files else None,
+                tweet_author_id=downloaded_files[0]['tweet_author_id']
             )
 
             # Record individual files
@@ -169,6 +170,19 @@ async def download_media_with_tracking(tweet_id, discord_user, discord_channel):
             print("ℹ️ No media found in tweet")
             return downloaded_files
         print(f"📥 Found {len(media_data)} media item(s)")
+
+        author_info = dig(data, 'tweet', 'author')
+        author_id = author_info.get('id')  # Twitter's numeric user ID
+        author_screen_name = author_info.get('screen_name')
+        author_display_name = author_info.get('name')
+
+        if author_id and author_screen_name:
+            # Insert or ignore duplicate author
+            db.insert_or_update_author(author_id, author_screen_name, author_display_name)
+            # Store the author's database ID for later use when recording download
+            author_db_id = db.get_author_id(author_id)
+        else:
+            author_db_id = None
 
         # Get the download directory
         download_dir = download_subpath()
@@ -252,7 +266,8 @@ async def download_media_with_tracking(tweet_id, discord_user, discord_channel):
                             'size': total_size,
                             'type': media_type,
                             'url': media_url,
-                            'index': i
+                            'index': i,
+                            'tweet_author_id': author_db_id,
                         })
                     else:
                         print(f"❌ Failed to save file: {filename}")

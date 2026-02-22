@@ -89,17 +89,17 @@ class MediaDatabase:
             return cursor.fetchone() is not None
     
     def record_download(self, tweet_id, tweet_url, discord_user, discord_channel, 
-                       file_size=0, media_count=1, download_path=None):
+                       file_size=0, media_count=1, download_path=None, tweet_author_id=None):
         """Record a new download in the database"""
         with self.get_cursor() as cursor:
             # Insert or update download record
             cursor.execute('''
                 INSERT OR REPLACE INTO downloads 
                 (tweet_id, tweet_url, discord_user_id, discord_username, 
-                 discord_channel_id, download_path, file_size, media_count, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 discord_channel_id, download_path, file_size, tweet_author_id, media_count, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (tweet_id, tweet_url, str(discord_user.id), discord_user.name,
-                  str(discord_channel.id), download_path, file_size, 
+                  str(discord_channel.id), download_path, file_size, tweet_author_id,
                   media_count, datetime.now().isoformat()))
             
             # Update statistics
@@ -203,3 +203,20 @@ class MediaDatabase:
                                  (download['tweet_id'],))
                     cursor.execute('DELETE FROM media_files WHERE tweet_id = ?',
                                  (download['tweet_id'],))
+
+    def insert_or_update_author(self, author_id, screen_name, display_name=None):
+        with self.get_cursor() as cursor:
+            cursor.execute('''
+                INSERT INTO tweet_authors (author_id, author_name, author_display_name, updated_at)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(author_id) DO UPDATE SET
+                    author_name = excluded.author_name,
+                    author_display_name = excluded.author_display_name,
+                    updated_at = CURRENT_TIMESTAMP
+            ''', (author_id, screen_name, display_name))
+
+    def get_author_id(self, author_id):
+        with self.get_cursor() as cursor:
+            cursor.execute('SELECT id FROM tweet_authors WHERE author_id = ?', (author_id,))
+            row = cursor.fetchone()
+            return row['id'] if row else None
