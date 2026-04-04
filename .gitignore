@@ -211,5 +211,5 @@ __marimo__/
 
 # Local database files
 *.db*
-downloaded_media/
-exported_media/
+downloaded_media*
+exported_media*

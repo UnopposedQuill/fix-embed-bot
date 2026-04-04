@@ -247,7 +247,8 @@ async def download_media_with_tracking(tweet_id):
 
                 # Create filename
                 timestamp = datetime.now().strftime("%H%M%S")
-                filename = f"{tweet_id}_{i}_{timestamp}{file_extension}"
+                author_prefix = author_screen_name or "unknown"
+                filename = f"{author_prefix}_{tweet_id}_{i}_{timestamp}{file_extension}"
                 filepath = os.path.join(download_dir, filename)
 
                 # Download the file
