@@ -1,0 +1,25 @@
+[MAIN]
+# Minimum pylint score to pass
+fail-under=9.0
+
+[FORMAT]
+max-line-length=120
+
+[MESSAGES CONTROL]
+disable=
+    # Docstrings are not enforced in this project
+    missing-module-docstring,
+    missing-class-docstring,
+    missing-function-docstring,
+    # download_media_with_tracking is intentionally a large function
+    too-many-locals,
+    too-many-branches,
+    too-many-statements,
+    too-many-nested-blocks,
+    # DB methods have many parameters by design (SQL row builders)
+    too-many-arguments,
+    too-many-positional-arguments,
+    # Bot must stay alive through unexpected errors
+    broad-exception-caught,
+    # TODOs are acceptable
+    fixme,
