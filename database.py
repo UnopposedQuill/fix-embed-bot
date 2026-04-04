@@ -35,6 +35,7 @@ class MediaDatabase:
                     discord_channel_id TEXT NOT NULL,
                     download_path TEXT,
                     file_size INTEGER,
+                    tweet_author_id TEXT,
                     media_count INTEGER DEFAULT 1,
                     download_status TEXT DEFAULT 'success',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -74,6 +75,13 @@ class MediaDatabase:
                 VALUES (1, 0, 0, 0)
             ''')
             
+            # Table for tracking unique users
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS unique_users (
+                    user_id TEXT PRIMARY KEY
+                )
+            ''')
+
             # Create indexes for faster queries
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_tweet_id ON downloads(tweet_id)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_discord_user ON downloads(discord_user_id)')
