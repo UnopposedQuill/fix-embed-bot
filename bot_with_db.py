@@ -9,7 +9,7 @@ import discord
 import requests
 from discord import app_commands
 
-from config import DISCORD_TOKEN, DOWNLOAD_PATH
+from config import DEV_GUILD_ID, DISCORD_TOKEN, DOWNLOAD_PATH
 from database import MediaDatabase
 
 # Initialize database
@@ -54,8 +54,14 @@ async def on_ready():
             )
         ''')
 
-    await tree.sync()
-    print('Slash commands synced.')
+    if DEV_GUILD_ID:
+        guild = discord.Object(id=DEV_GUILD_ID)
+        tree.copy_global_to(guild=guild)
+        await tree.sync(guild=guild)
+        print(f'Slash commands synced to dev guild {DEV_GUILD_ID} (instant).')
+    else:
+        await tree.sync()
+        print('Slash commands synced globally (may take up to 1 hour to propagate).')
 
 @bot.event
 async def on_message(message):
