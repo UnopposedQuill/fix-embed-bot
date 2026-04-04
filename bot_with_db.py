@@ -8,7 +8,6 @@ from functools import reduce
 import discord
 import requests
 from discord import app_commands
-from discord.ext import commands
 
 from config import DISCORD_TOKEN, DOWNLOAD_PATH
 from database import MediaDatabase
@@ -27,7 +26,8 @@ def download_subpath():
 # Initialize bot
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix='!', intents=intents)
+bot = discord.Client(intents=intents)
+tree = app_commands.CommandTree(bot)
 
 # Regex to detect Twitter/X URLs in user messages
 TWITTER_REGEX = re.compile(
@@ -54,7 +54,7 @@ async def on_ready():
             )
         ''')
 
-    await bot.tree.sync()
+    await tree.sync()
     print('Slash commands synced.')
 
 @bot.event
@@ -62,18 +62,11 @@ async def on_message(message):
     if message.author == bot.user:
         return
 
-    # Check for commands first
-    if message.content.startswith('!stats'):
-        await show_stats(message)
-        return
-
     matches = TWITTER_REGEX.findall(message.content)
 
     if matches:
         for tweet_id in matches:
             await process_tweet_with_db(message, tweet_id)
-
-    await bot.process_commands(message)
 
 async def process_tweet_with_db(message, tweet_id):
     """Process tweet with database tracking"""
@@ -299,7 +292,8 @@ async def download_media_with_tracking(tweet_id):
         traceback.print_exc()
         return downloaded_files
 
-async def show_stats(message):
+@tree.command(name="stats", description="Show download statistics.")
+async def show_stats(interaction: discord.Interaction):
     """Display download statistics"""
     stats = db.get_download_stats()
 
@@ -308,7 +302,6 @@ async def show_stats(message):
         color=discord.Color.blue()
     )
 
-    # Format size
     size_mb = stats['total_size'] / 1024 / 1024
 
     embed.add_field(
@@ -329,7 +322,6 @@ async def show_stats(message):
         inline=True
     )
 
-    # Recent activity
     recent_downloads = db.get_recent_downloads(5)
     if recent_downloads:
         recent_text = "\n".join(
@@ -342,16 +334,17 @@ async def show_stats(message):
             inline=False
         )
 
-    await message.channel.send(embed=embed)
+    await interaction.response.send_message(embed=embed)
 
-# Add additional commands
-@bot.command(name="recent")
-async def show_recent(ctx, limit: int = 10):
+
+@tree.command(name="recent", description="List the most recent downloads.")
+@app_commands.describe(limit="Number of entries to show (default 10)")
+async def show_recent(interaction: discord.Interaction, limit: int = 10):
     """Show recent downloads"""
     recent = db.get_recent_downloads(limit)
 
     if not recent:
-        await ctx.send("No downloads found.")
+        await interaction.response.send_message("No downloads found.")
         return
 
     embed = discord.Embed(
@@ -370,15 +363,17 @@ async def show_recent(ctx, limit: int = 10):
             inline=True
         )
 
-    await ctx.send(embed=embed)
+    await interaction.response.send_message(embed=embed)
 
-@bot.command(name="search")
-async def search_downloads(ctx, *, query: str):
+
+@tree.command(name="search", description="Search downloads by tweet ID, username, or filename.")
+@app_commands.describe(query="Search term")
+async def search_downloads(interaction: discord.Interaction, query: str):
     """Search downloads"""
     results = db.search_downloads(query)
 
     if not results:
-        await ctx.send(f"No results found for '{query}'")
+        await interaction.response.send_message(f"No results found for '{query}'")
         return
 
     embed = discord.Embed(
@@ -401,16 +396,17 @@ async def search_downloads(ctx, *, query: str):
     if len(results) > 5:
         embed.set_footer(text=f"Showing 5 of {len(results)} results")
 
-    await ctx.send(embed=embed)
+    await interaction.response.send_message(embed=embed)
 
-@bot.command(name="cleanup")
-@commands.has_permissions(administrator=True)
-async def cleanup_database(ctx):
+
+@tree.command(name="cleanup", description="Remove database records for files no longer on disk.")
+@app_commands.checks.has_permissions(administrator=True)
+async def cleanup_database(interaction: discord.Interaction):
     """Clean up orphaned database records"""
     db.cleanup_orphaned_records()
-    await ctx.send("✅ Database cleanup complete!")
+    await interaction.response.send_message("✅ Database cleanup complete!")
 
-@bot.tree.command(
+@tree.command(
     name="compact",
     description="Download unprocessed tweets and remove older duplicate posts, keeping only the newest per tweet."
 )
