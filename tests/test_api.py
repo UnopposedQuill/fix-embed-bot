@@ -25,17 +25,7 @@ async def test_api_successful_response():
     }
     
     with patch('requests.get', return_value=mock_response):
-        # Create mock user and channel
-        mock_user = Mock()
-        mock_user.id = "123"
-        mock_user.name = "DiscordUser"
-        mock_channel = Mock()
-        mock_channel.id = "456"
-        
-        # Call the function
-        result = await download_media_with_tracking(
-            "123456789", mock_user, mock_channel
-        )
+        result = await download_media_with_tracking("123456789")
         
         # Assert it processed correctly
         assert isinstance(result, list)

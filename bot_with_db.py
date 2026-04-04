@@ -1,13 +1,17 @@
 # bot_with_db.py
-import discord
-import re
 import os
-import requests
-from discord.ext import commands
+import re
+import traceback
 from datetime import datetime
-from database import MediaDatabase
-from config import DISCORD_TOKEN, DOWNLOAD_PATH, ALLOWED_EXTENSIONS
 from functools import reduce
+
+import discord
+import requests
+from discord import app_commands
+from discord.ext import commands
+
+from config import DISCORD_TOKEN, DOWNLOAD_PATH
+from database import MediaDatabase
 
 # Initialize database
 db = MediaDatabase()
@@ -25,18 +29,23 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# Regex to detect Twitter/X URLs
+# Regex to detect Twitter/X URLs in user messages
 TWITTER_REGEX = re.compile(
     r'https?://(?:www\.)?(?:twitter\.com|x\.com)/(?:\w+)/status/(\d+)'
+)
+
+# Broader regex that also covers fxtwitter bot-posted messages
+TWITTER_URL_REGEX = re.compile(
+    r'https?://(?:www\.)?(?:twitter\.com|x\.com|fxtwitter\.com)/\w+/status/(\d+)'
 )
 
 @bot.event
 async def on_ready():
     print(f'Logged in as {bot.user}')
-    
+
     # Create necessary directories
     os.makedirs(DOWNLOAD_PATH, exist_ok=True)
-    
+
     # Create unique_users table if it doesn't exist
     with db.get_cursor() as cursor:
         cursor.execute('''
@@ -45,22 +54,25 @@ async def on_ready():
             )
         ''')
 
+    await bot.tree.sync()
+    print('Slash commands synced.')
+
 @bot.event
 async def on_message(message):
     if message.author == bot.user:
         return
-    
+
     # Check for commands first
     if message.content.startswith('!stats'):
         await show_stats(message)
         return
-    
+
     matches = TWITTER_REGEX.findall(message.content)
-    
+
     if matches:
         for tweet_id in matches:
             await process_tweet_with_db(message, tweet_id)
-    
+
     await bot.process_commands(message)
 
 async def process_tweet_with_db(message, tweet_id):
@@ -86,9 +98,7 @@ async def process_tweet_with_db(message, tweet_id):
         await message.channel.send(f"📥 Media from {message.author}: {fx_url}")
 
         # Download media
-        downloaded_files = await download_media_with_tracking(
-            tweet_id, message.author, message.channel
-        )
+        downloaded_files = await download_media_with_tracking(tweet_id)
 
         # Finally, record in database
         if downloaded_files:
@@ -141,14 +151,13 @@ async def delete_message(message):
         # await message.channel.send("⚠️ Need 'Manage Messages' to clean up.", delete_after=5)
 
 
-async def download_media_with_tracking(tweet_id, discord_user, discord_channel):
+async def download_media_with_tracking(tweet_id):
+    """Download media with enhanced tracking"""
     def dig(obj, *keys, default=None):
         try:
             return reduce(lambda d, k: d[k], keys, obj)
         except (KeyError, TypeError):
             return default
-
-    """Download media with enhanced tracking"""
     downloaded_files = []
 
     try:
@@ -197,7 +206,7 @@ async def download_media_with_tracking(tweet_id, discord_user, discord_channel):
                 if media_type == 'photo' or 'url' in media_item:
                     # Photos have direct URL
                     media_url = media_item.get('url')
-                elif media_type == 'video' or media_type == 'gif':
+                elif media_type in ('video', 'gif'):
                     # Videos/GIFs might have variants
                     variants = media_item.get('variants', [])
                     if variants:
@@ -286,40 +295,39 @@ async def download_media_with_tracking(tweet_id, discord_user, discord_channel):
         return downloaded_files
     except Exception as e:
         print(f"❌ Unexpected error processing tweet {tweet_id}: {e}")
-        import traceback
         traceback.print_exc()
         return downloaded_files
 
 async def show_stats(message):
     """Display download statistics"""
     stats = db.get_download_stats()
-    
+
     embed = discord.Embed(
         title="📊 Media Download Statistics",
         color=discord.Color.blue()
     )
-    
+
     # Format size
     size_mb = stats['total_size'] / 1024 / 1024
-    
+
     embed.add_field(
         name="Total Downloads",
         value=f"**{stats['total_downloads']}** tweets",
         inline=True
     )
-    
+
     embed.add_field(
         name="Storage Used",
         value=f"**{size_mb:.2f} MB**",
         inline=True
     )
-    
+
     embed.add_field(
         name="Unique Users",
         value=f"**{stats['unique_users']}** users",
         inline=True
     )
-    
+
     # Recent activity
     recent_downloads = db.get_recent_downloads(5)
     if recent_downloads:
@@ -332,7 +340,7 @@ async def show_stats(message):
             value=recent_text,
             inline=False
         )
-    
+
     await message.channel.send(embed=embed)
 
 # Add additional commands
@@ -340,16 +348,16 @@ async def show_stats(message):
 async def show_recent(ctx, limit: int = 10):
     """Show recent downloads"""
     recent = db.get_recent_downloads(limit)
-    
+
     if not recent:
         await ctx.send("No downloads found.")
         return
-    
+
     embed = discord.Embed(
         title="🕐 Recent Downloads",
         color=discord.Color.green()
     )
-    
+
     for i, row in enumerate(recent, 1):
         embed.add_field(
             name=f"{i}. Tweet {row['tweet_id'][:8]}...",
@@ -360,24 +368,24 @@ async def show_recent(ctx, limit: int = 10):
             ),
             inline=True
         )
-    
+
     await ctx.send(embed=embed)
 
 @bot.command(name="search")
 async def search_downloads(ctx, *, query: str):
     """Search downloads"""
     results = db.search_downloads(query)
-    
+
     if not results:
         await ctx.send(f"No results found for '{query}'")
         return
-    
+
     embed = discord.Embed(
         title=f"🔍 Search Results for '{query}'",
         color=discord.Color.orange(),
         description=f"Found {len(results)} matching downloads"
     )
-    
+
     for i, row in enumerate(results[:5], 1):
         embed.add_field(
             name=f"{i}. {row['tweet_id'][:12]}...",
@@ -388,10 +396,10 @@ async def search_downloads(ctx, *, query: str):
             ),
             inline=True
         )
-    
+
     if len(results) > 5:
         embed.set_footer(text=f"Showing 5 of {len(results)} results")
-    
+
     await ctx.send(embed=embed)
 
 @bot.command(name="cleanup")
@@ -400,6 +408,98 @@ async def cleanup_database(ctx):
     """Clean up orphaned database records"""
     db.cleanup_orphaned_records()
     await ctx.send("✅ Database cleanup complete!")
+
+@bot.tree.command(
+    name="compact",
+    description="Download unprocessed tweets and remove older duplicate posts, keeping only the newest per tweet."
+)
+@app_commands.checks.has_permissions(manage_messages=True)
+async def compact(interaction: discord.Interaction):
+    """Scan the channel newest-first, ensure every tweet is downloaded, then delete older duplicate posts."""
+    await interaction.response.defer(thinking=True)
+    channel = interaction.channel
+
+    status_msg = await interaction.followup.send("🔍 Scanning channel history...")
+
+    # Pass 1: collect all messages that contain tweet URLs, newest-first.
+    # Each tweet_id maps to an ordered list of messages (index 0 = newest).
+    tweet_messages: dict[str, list[discord.Message]] = {}
+    scanned = 0
+
+    async for message in channel.history(limit=None, oldest_first=False):
+        scanned += 1
+        if scanned % 500 == 0:
+            await status_msg.edit(content=f"🔍 Scanned {scanned} messages...")
+
+        tweet_ids = TWITTER_URL_REGEX.findall(message.content)
+        for tweet_id in tweet_ids:
+            tweet_messages.setdefault(tweet_id, []).append(message)
+
+    total_tweets = len(tweet_messages)
+    await status_msg.edit(
+        content=f"📋 Found {total_tweets} unique tweet(s) across {scanned} messages. Processing..."
+    )
+
+    downloaded_count = 0
+    deleted_count = 0
+
+    for i, (tweet_id, messages) in enumerate(tweet_messages.items(), 1):
+        if i % 10 == 0:
+            await status_msg.edit(
+                content=(
+                    f"⚙️ Processing tweet {i}/{total_tweets}... "
+                    f"({downloaded_count} downloaded, {deleted_count} deleted)"
+                )
+            )
+
+        newest = messages[0]
+
+        # Ensure the tweet media is downloaded before doing anything else.
+        if not db.is_tweet_downloaded(tweet_id):
+            files = await download_media_with_tracking(tweet_id)
+            if files:
+                total_size = sum(os.path.getsize(f['path']) for f in files)
+                db.record_download(
+                    tweet_id=tweet_id,
+                    tweet_url=f"https://twitter.com/i/status/{tweet_id}",
+                    discord_user=newest.author,
+                    discord_channel=channel,
+                    file_size=total_size,
+                    media_count=len(files),
+                    download_path=files[0]['path'],
+                    tweet_author_id=files[0]['tweet_author_id'],
+                )
+                for file_info in files:
+                    db.add_media_file(
+                        tweet_id=tweet_id,
+                        file_name=file_info['name'],
+                        file_path=file_info['path'],
+                        file_size=file_info['size'],
+                        file_type=file_info['type'],
+                        download_url=file_info.get('url'),
+                    )
+                downloaded_count += 1
+
+        # Only delete older duplicates once the tweet is confirmed in the database.
+        if db.is_tweet_downloaded(tweet_id):
+            for old_message in messages[1:]:
+                try:
+                    await old_message.delete()
+                    deleted_count += 1
+                except discord.NotFound:
+                    pass  # already gone
+                except discord.Forbidden:
+                    print(f"⚠️ No permission to delete message {old_message.id} in #{channel}")
+
+    await status_msg.edit(
+        content=(
+            f"✅ Compact complete!\n"
+            f"🔍 {scanned} messages scanned\n"
+            f"📥 {downloaded_count} tweet(s) newly downloaded\n"
+            f"🗑️ {deleted_count} duplicate message(s) removed"
+        )
+    )
+
 
 # Run the bot
 if __name__ == "__main__":
