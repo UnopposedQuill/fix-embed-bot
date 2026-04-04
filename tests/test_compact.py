@@ -171,21 +171,42 @@ async def test_compact_deletes_older_duplicate_messages():
 
 @pytest.mark.asyncio
 async def test_compact_does_not_delete_if_download_failed():
-    """If a tweet fails to download, older duplicates are NOT deleted (data safety)."""
+    """A transient API error (None) leaves all messages intact."""
     tweet_id = "777777777"
     newest = make_message(f"https://twitter.com/user/status/{tweet_id}", msg_id=20)
     older = make_message(f"https://twitter.com/user/status/{tweet_id}", msg_id=10)
     interaction, _ = make_interaction([newest, older])
 
     with patch("bot_with_db.db") as mock_db, \
-         patch("bot_with_db.download_media_with_tracking", new_callable=AsyncMock, return_value=[]):
-        # Tweet is not in db and download returns nothing (simulates failure)
+         patch("bot_with_db.download_media_with_tracking", new_callable=AsyncMock, return_value=None), \
+         patch("bot_with_db._is_tweet_deleted", return_value=False):
         mock_db.is_tweet_downloaded.return_value = False
 
         await compact.callback(interaction)
 
         older.delete.assert_not_called()
         newest.delete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_compact_marks_no_media_tweet_as_processed():
+    """A tweet with no media (empty list, not None) is recorded so it is not retried."""
+    tweet_id = "131313131"
+    msg = make_message(f"https://twitter.com/user/status/{tweet_id}", msg_id=10)
+    interaction, _ = make_interaction([msg])
+
+    with patch("bot_with_db.db") as mock_db, \
+         patch("bot_with_db.download_media_with_tracking", new_callable=AsyncMock, return_value=[]):
+        mock_db.is_tweet_downloaded.return_value = False
+        mock_db.get_download.return_value = None
+
+        await compact.callback(interaction)
+
+        mock_db.record_download.assert_called_once()
+        # media_count should be 0
+        _, kwargs = mock_db.record_download.call_args
+        assert kwargs["media_count"] == 0
+        assert kwargs["download_path"] is None
 
 
 @pytest.mark.asyncio

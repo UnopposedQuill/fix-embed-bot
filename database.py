@@ -228,3 +228,17 @@ class MediaDatabase:
             cursor.execute('SELECT id FROM tweet_authors WHERE author_id = ?', (author_id,))
             row = cursor.fetchone()
             return row['id'] if row else None
+
+    def get_download(self, tweet_id):
+        """Return the download record for a tweet, or None if not found."""
+        with self.get_cursor() as cursor:
+            cursor.execute('SELECT * FROM downloads WHERE tweet_id = ?', (tweet_id,))
+            return cursor.fetchone()
+
+    def set_download_author(self, tweet_id, author_db_id):
+        """Update the tweet_author_id on an existing download record."""
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                'UPDATE downloads SET tweet_author_id = ? WHERE tweet_id = ?',
+                (author_db_id, tweet_id),
+            )

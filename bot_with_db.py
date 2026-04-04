@@ -168,7 +168,7 @@ async def download_media_with_tracking(tweet_id):
 
         if response.status_code != 200:
             print(f"❌ API Error: Status {response.status_code}")
-            return downloaded_files
+            return None
 
         data = response.json()
 
@@ -176,7 +176,7 @@ async def download_media_with_tracking(tweet_id):
         media_data = dig(data, 'tweet', 'media', 'all')
         if not media_data:
             print("ℹ️ No media found in tweet")
-            return downloaded_files
+            return downloaded_files  # [] — tweet exists but has no media
         print(f"📥 Found {len(media_data)} media item(s)")
 
         author_info = dig(data, 'tweet', 'author')
@@ -289,14 +289,14 @@ async def download_media_with_tracking(tweet_id):
 
     except requests.exceptions.Timeout:
         print(f"❌ Timeout fetching tweet {tweet_id}")
-        return downloaded_files
+        return None
     except requests.exceptions.RequestException as e:
         print(f"❌ Network error for tweet {tweet_id}: {e}")
-        return downloaded_files
+        return None
     except Exception as e:
         print(f"❌ Unexpected error processing tweet {tweet_id}: {e}")
         traceback.print_exc()
-        return downloaded_files
+        return None
 
 @tree.command(name="stats", description="Show download statistics.")
 async def show_stats(interaction: discord.Interaction):
@@ -412,6 +412,117 @@ async def cleanup_database(interaction: discord.Interaction):
     db.cleanup_orphaned_records()
     await interaction.response.send_message("✅ Database cleanup complete!")
 
+def _is_tweet_deleted(tweet_id: str) -> bool:
+    """Return True if the FxTwitter API reports the tweet as deleted (404)."""
+    try:
+        response = requests.get(
+            f"https://api.fxtwitter.com/status/{tweet_id}", timeout=15
+        )
+        return response.status_code == 404
+    except requests.exceptions.RequestException:
+        return False
+
+
+def _message_has_embed_media(message: discord.Message) -> bool:
+    """Return True if the message has at least one Discord embed with an image or video."""
+    return any(
+        (embed.image and embed.image.url) or (embed.video and embed.video.url)
+        for embed in message.embeds
+    )
+
+
+def _author_from_embed(message: discord.Message) -> tuple[str, str | None]:
+    """Extract (screen_name, display_name) from the structured embed author fields.
+
+    Discord exposes these directly for Twitter embeds:
+      embed.author.name → display name (e.g. "Kyrs ✨")
+      embed.author.url  → profile URL  (e.g. "https://twitter.com/kyrs2601")
+
+    Returns ('unknown', None) when no embed carries author information.
+    """
+    for embed in message.embeds:
+        if not (embed.author and embed.author.url):
+            continue
+        m = re.search(r'(?:twitter\.com|x\.com)/(\w+)/?$', embed.author.url)
+        if m:
+            return m.group(1), embed.author.name or None
+    return 'unknown', None
+
+
+async def download_from_discord_embed(tweet_id: str, message: discord.Message) -> list:
+    """Download media from a Discord message's cached embed (fallback for deleted tweets).
+
+    Returns a list in the same format as download_media_with_tracking.
+    """
+    downloaded_files = []
+    if not message.embeds:
+        return downloaded_files
+
+    screen_name, display_name = _author_from_embed(message)
+
+    # Persist author info if we have enough to go on (screen_name serves as the ID here
+    # since deleted tweets have no numeric Twitter author ID available).
+    author_db_id = None
+    if screen_name != 'unknown':
+        db.insert_or_update_author(screen_name, screen_name, display_name)
+        author_db_id = db.get_author_id(screen_name)
+
+    download_dir = download_subpath()
+    timestamp = datetime.now().strftime("%H%M%S")
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+
+    for i, embed in enumerate(message.embeds):
+        if embed.image and embed.image.url:
+            # Prefer Discord's proxy URL — it survives tweet deletion unlike pbs.twimg.com
+            media_url = embed.image.proxy_url or embed.image.url
+            media_type = 'photo'
+        elif embed.video and embed.video.url:
+            media_url = embed.video.proxy_url or embed.video.url
+            media_type = 'video'
+        else:
+            continue
+
+        clean_url = media_url.split('?')[0]
+        # Twitter appends size qualifiers like :large, :orig, :small after the extension.
+        # e.g. https://pbs.twimg.com/media/ABC.jpg:large — strip the colon suffix.
+        file_extension = re.sub(r':\w+$', '', os.path.splitext(clean_url)[1]) or (
+            '.mp4' if media_type == 'video' else '.jpg'
+        )
+        filename = f"{screen_name}_{tweet_id}_{i}_{timestamp}{file_extension}"
+        filepath = os.path.join(download_dir, filename)
+
+        try:
+            with requests.get(media_url, headers=headers, stream=True, timeout=30) as r:
+                r.raise_for_status()
+                total_size = 0
+                with open(filepath, 'wb') as f:
+                    for chunk in r.iter_content(chunk_size=8192):
+                        if chunk:
+                            f.write(chunk)
+                            total_size += len(chunk)
+
+            if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
+                print(f"✅ Downloaded from embed: {filename} ({total_size / 1024:.1f} KB)")
+                downloaded_files.append({
+                    'name': filename,
+                    'path': filepath,
+                    'size': total_size,
+                    'type': media_type,
+                    'url': media_url,
+                    'index': i,
+                    'tweet_author_id': author_db_id,
+                })
+        except requests.exceptions.HTTPError as e:
+            if e.response is not None and e.response.status_code == 404:
+                print(f"⚠️ Embed media expired from cache for tweet {tweet_id}, item {i}")
+            else:
+                print(f"❌ HTTP error downloading embed media item {i} for tweet {tweet_id}: {e}")
+        except Exception as e:
+            print(f"❌ Error downloading embed media item {i} for tweet {tweet_id}: {e}")
+
+    return downloaded_files
+
+
 @tree.command(
     name="compact",
     description="Download unprocessed tweets and remove older duplicate posts, keeping only the newest per tweet."
@@ -455,22 +566,53 @@ async def compact(interaction: discord.Interaction):
                 )
             )
 
-        newest = messages[0]
+        # canonical is the message we will keep; defaults to newest but may change
+        # to whichever message holds the embed for a deleted tweet.
+        canonical = messages[0]
 
-        # Ensure the tweet media is downloaded before doing anything else.
         if not db.is_tweet_downloaded(tweet_id):
             files = await download_media_with_tracking(tweet_id)
-            if files:
+
+            if files is None:
+                # Non-200 / network error — check whether the tweet was specifically deleted.
+                if _is_tweet_deleted(tweet_id):
+                    embed_source = next(
+                        (m for m in messages if _message_has_embed_media(m)), None
+                    )
+                    if embed_source:
+                        print(f"🗑️ Tweet {tweet_id} deleted — recovering from Discord embed cache.")
+                        files = await download_from_discord_embed(tweet_id, embed_source)
+                        if files:
+                            canonical = embed_source
+                        else:
+                            embed_source = None  # cache expired, treat as unrecoverable
+
+                    if not embed_source:
+                        # No embed or cache expired — nothing left to recover, purge all messages.
+                        print(f"🗑️ Tweet {tweet_id} deleted with no recoverable data — removing all messages.")
+                        for msg in messages:
+                            try:
+                                await msg.delete()
+                                deleted_count += 1
+                            except discord.NotFound:
+                                pass
+                            except discord.Forbidden:
+                                print(f"⚠️ No permission to delete message {msg.id} in #{channel}")
+                        continue
+                # else: transient error — leave the messages alone and move on.
+
+            if files is not None:
+                # Record the download: either real files or an explicit empty list (no media).
                 total_size = sum(os.path.getsize(f['path']) for f in files)
                 db.record_download(
                     tweet_id=tweet_id,
                     tweet_url=f"https://twitter.com/i/status/{tweet_id}",
-                    discord_user=newest.author,
+                    discord_user=canonical.author,
                     discord_channel=channel,
                     file_size=total_size,
                     media_count=len(files),
-                    download_path=files[0]['path'],
-                    tweet_author_id=files[0]['tweet_author_id'],
+                    download_path=files[0]['path'] if files else None,
+                    tweet_author_id=files[0]['tweet_author_id'] if files else None,
                 )
                 for file_info in files:
                     db.add_media_file(
@@ -481,18 +623,32 @@ async def compact(interaction: discord.Interaction):
                         file_type=file_info['type'],
                         download_url=file_info.get('url'),
                     )
-                downloaded_count += 1
+                if files:
+                    downloaded_count += 1
 
-        # Only delete older duplicates once the tweet is confirmed in the database.
+        # Backfill missing author from the embed for already-downloaded tweets.
+        record = db.get_download(tweet_id)
+        if record and record['tweet_author_id'] is None:
+            screen_name, display_name = _author_from_embed(canonical)
+            if screen_name != 'unknown':
+                db.insert_or_update_author(screen_name, screen_name, display_name)
+                author_db_id = db.get_author_id(screen_name)
+                db.set_download_author(tweet_id, author_db_id)
+                print(f"✏️ Backfilled author @{screen_name} for tweet {tweet_id}")
+
+        # Only delete duplicates once the tweet is confirmed in the database.
+        # Keep canonical (which may not be messages[0] for embed-recovered tweets).
         if db.is_tweet_downloaded(tweet_id):
-            for old_message in messages[1:]:
+            for msg in messages:
+                if msg.id == canonical.id:
+                    continue
                 try:
-                    await old_message.delete()
+                    await msg.delete()
                     deleted_count += 1
                 except discord.NotFound:
                     pass  # already gone
                 except discord.Forbidden:
-                    print(f"⚠️ No permission to delete message {old_message.id} in #{channel}")
+                    print(f"⚠️ No permission to delete message {msg.id} in #{channel}")
 
     await status_msg.edit(
         content=(
