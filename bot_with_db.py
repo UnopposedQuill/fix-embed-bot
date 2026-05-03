@@ -659,6 +659,7 @@ async def compact(interaction: discord.Interaction):
         )
     )
 
+    print(f"✅ Compact complete!")
 
 # Run the bot
 if __name__ == "__main__":
